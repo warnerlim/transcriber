@@ -1,0 +1,8 @@
+torch 
+faster_whisper
+openai 
+fpdf2 
+soundfile
+soundcard
+numpy
+ffmpeg

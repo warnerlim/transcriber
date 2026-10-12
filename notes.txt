@@ -1,0 +1,93 @@
+python -m spacy download en_core_web_sm
+
+Invoke-WebRequest https://raw.githubusercontent.com/milvus-io/milvus/refs/heads/master/scripts/standalone_embed.bat -OutFile standalone.bat
+
+.\standalone.bat start
+
+"""
+nlp_functions.py
+================
+NLP helpers imported by milvus.py. They turn a raw WeChat message into the two
+vectors stored in the ``wechat_messages`` collection:
+
+    embedding         FLOAT_VECTOR(768)   TextEmbedder    -> what the message means
+    sentiment_scores  FLOAT_VECTOR(3)     SentimentModel  -> [negative, neutral, positive]
+
+and provide ``preprocess_wechat_text`` to clean the raw string first.
+
+Install:
+    pip install torch transformers sentence-transformers numpy
+
+The models are downloaded from Hugging Face the first time they are used.
+To swap them without editing this file, set environment variables:
+    WECHAT_EMBEDDING_MODEL   any sentence-transformers model that outputs 768-dim vectors
+    WECHAT_SENTIMENT_MODEL   any sequence-classification model with 3 labels (neg/neu/pos)
+
+Heavy libraries (torch, transformers, sentence-transformers) are imported lazily,
+so importing this module -- e.g. just for preprocess_wechat_text -- is fast.
+"""
+
+"""
+pdf_ingest.py — Enterprise RAG PDF ingestion pipeline targeting Milvus.
+
+Pipeline overview
+-----------------
+1. Recursively scan a directory for ``*.pdf`` files.
+2. Extract page text natively with PyMuPDF (``fitz``). If a page yields less
+   than ``--min-text-chars`` characters (or extraction fails), the page is
+   treated as scanned/image-based: it is rendered in-memory at >=200 DPI into
+   a ``PIL.Image`` and parsed with the NaviDC-OCR / TeleOCR vision-language
+   model (``StarDoc-AI/NaviDC-OCR``). Model weights are loaded lazily — only
+   when the first low-text page is actually encountered.
+3. Clean raw text with ``preprocess_wechat_text`` and chunk it with a
+   token-exact ``RecursiveCharacterTextSplitter`` (tiktoken ``cl100k_base``,
+   default 500 tokens per chunk / 50 tokens overlap).
+4. Build deterministic, deduplication-safe records (SHA-256 ``msg_id``) and
+   batch-upsert them into Milvus through the project's existing vector-store
+   helpers (``get_milvus_client`` / ``insert_wechat_messages``).
+
+External project dependencies
+-----------------------------
+The following helpers are expected to exist in the project (imported at
+runtime; ``PDF_INGEST_VECTOR_MODULE`` may name the module explicitly):
+
+* ``preprocess_wechat_text(text: str) -> str``
+* ``get_milvus_client() -> Any``
+* ``insert_wechat_messages(batch, client=..., skip_existing=True) -> Any``
+
+If ``preprocess_wechat_text`` cannot be imported, a local equivalent cleaner
+(control-character stripping + whitespace normalisation) is used instead.
+The Milvus helpers are hard requirements for the upsert stage.
+
+Usage
+-----
+    python pdf_ingest.py --dir /data/pdfs \
+        --chunk-size 500 --chunk-overlap 50 \
+        --ocr-model StarDoc-AI/NaviDC-OCR
+"""
+
+
+"""
+Live Interview Translator — modular refactor of main2.py.
+
+Architecture
+------------
+- Config           : frozen dataclass holding every tunable constant.
+- MemoryService    : Milvus connection, warmup, vector search, result formatting.
+                     Exposes results through the ``search_memory`` tool schema.
+- AudioRecorder    : loopback capture thread with VAD-style silence detection.
+- Transcriber      : faster-whisper worker, isolated from the capture loop.
+- AssistantAgent   : OpenAI/LM Studio conversation with a function-calling loop
+                     (the LLM decides when to call ``search_memory``).
+- AppUI            : Tkinter widgets + thread-safe writes via ``root.after``.
+- VoiceAssistantApp: wires everything together and controls startup order.
+
+Buffer-underrun fix (SoundcardRuntimeWarning)
+---------------------------------------------
+1. BLAS/OMP thread caps are set as environment variables *before* numpy,
+   faster-whisper or torch are imported, so model warmup cannot saturate all
+   cores and starve the audio capture loop.
+2. The audio listener thread is only started after ``MemoryService.initialize()``
+   (which imports milvus.py, loads the embedding models and runs a warmup
+   query) has fully completed.
+"""
