@@ -1,0 +1,8 @@
+# Python compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Milvus data folder (adjust folder name if customized)
+volumes/milvus
