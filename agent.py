@@ -1,4 +1,3 @@
-# assistant_agent.py
 import json
 import logging
 import queue
@@ -13,6 +12,11 @@ from service.memory_service import MemoryService
 
 logger = logging.getLogger("voice_assistant")
 
+_SCOPE_LABELS = {
+    "auto": "chats + documents",
+    "chat": "past chats",
+    "pdf": "documents",
+}
 
 class AssistantAgent:
     """
@@ -20,10 +24,11 @@ class AssistantAgent:
     an agentic tool-calling loop.
 
     Memory retrieval is NOT automatic: the model receives the ``search_memory``
-    tool schema and decides per-turn whether it needs past-chat context. When
-    it emits a tool call, this class executes it against MemoryService, feeds
-    the result back as a ``tool`` message, and asks the model to continue —
-    up to ``config.max_tool_rounds`` times per turn.
+    tool schema and decides per-turn whether it needs past-chat or document
+    context, and which vector database to search (scope). When it emits a tool
+    call, this class executes it against MemoryService, feeds the result back
+    as a ``tool`` message, and asks the model to continue — up to
+    ``config.max_tool_rounds`` times per turn.
     """
 
     def __init__(
@@ -102,7 +107,7 @@ class AssistantAgent:
         messages: List[Dict[str, Any]] = (
             [{"role": "system", "content": self._cfg.system_prompt}] + self._history
         )
-        tools = [MemoryService.TOOL_SCHEMA] if self._memory.available else None
+        tools = [self._memory.tool_schema] if self._memory.available else None
 
         assistant_reply = ""
         translation_header_written = False
@@ -221,8 +226,15 @@ class AssistantAgent:
             content = f"Unknown tool: {name}"
         else:
             query = str(args.get("query", "")).strip()
-            self._write(f'📚 Memory: searching past chats for "{query}"...\n')
-            block, n_hits = self._memory.search(query)
+            scope = str(args.get("scope", "auto")).strip().lower()
+            if scope not in _SCOPE_LABELS:
+                scope = "auto"
+            file_name = str(args.get("file_name", "")).strip() or None
+
+            target = f"document '{file_name}'" if file_name else _SCOPE_LABELS[scope]
+            self._write(f'📚 Memory: searching {target} for "{query}"...\n')
+
+            block, n_hits = self._memory.search(query, scope=scope, file_name=file_name)
             if block:
                 self._write(f"📚 Memory: {n_hits} relevant snippet(s) found\n")
                 content = f"<memory>\n{block}\n</memory>"

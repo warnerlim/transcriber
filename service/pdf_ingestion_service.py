@@ -1,4 +1,3 @@
-# pdf_ingestion_service.py
 import logging
 import threading
 from pathlib import Path
@@ -17,6 +16,8 @@ class PdfIngestionService:
       ``files_to_database_here`` folder.
     - Can be triggered on-demand via the UI when the user drops new files in.
     - Prevents concurrent runs with a threading lock.
+    - Writes into the dedicated ``pdf_documents`` collection (chat messages
+      live separately in ``wechat_messages``).
     """
 
     def __init__(
@@ -27,16 +28,6 @@ class PdfIngestionService:
         self._cfg = config
         self._status_cb = status_cb or (lambda _msg: None)
         self._busy = threading.Lock()
-        self._sentiment_model: Any = None
-
-    def _ensure_sentiment_model(self) -> Any:
-        """Lazy-load the sentiment model (only needed for ingestion)."""
-        if self._sentiment_model is None:
-            from nlp.sentiment import SentimentModel
-
-            self._sentiment_model = SentimentModel()
-            logger.info("Sentiment model loaded for PDF ingestion")
-        return self._sentiment_model
 
     def ingest(
         self,
@@ -62,13 +53,11 @@ class PdfIngestionService:
 
             self._status_cb(f"🔄 Starting PDF ingestion from {target}...\n")
 
-            from storage.message_store import insert_wechat_messages
+            from storage.pdf_store import insert_pdf_chunks
             from ingestion.pdf_ingest import ingest_directory
 
-            sentiment_model = self._ensure_sentiment_model()
-
             def insert_batch(records: list[dict[str, Any]]) -> None:
-                insert_wechat_messages(records, client, embedder, sentiment_model)
+                insert_pdf_chunks(records, client, embedder)
 
             counters = ingest_directory(
                 root=target,

@@ -1,4 +1,3 @@
-# pdf_ingest.py
 from __future__ import annotations
 
 import hashlib
@@ -27,9 +26,6 @@ DEFAULT_CHUNK_SIZE = 500
 DEFAULT_CHUNK_OVERLAP = 50
 MAX_TEXT_PAYLOAD_CHARS = 2040
 OCR_MAX_NEW_TOKENS = 4096
-
-SENDER = "PDF_Ingest"
-RECEIVER = "System"
 
 
 # --------------------------------------------------------------------------- #
@@ -215,7 +211,12 @@ def build_records_for_pdf(
     min_text_chars: int,
     dpi: int,
 ) -> Iterator[Dict[str, Any]]:
-    """Yield fully-formed Milvus records for every chunk of one PDF."""
+    """Yield fully-formed records for every chunk of one PDF.
+
+    Records are shaped for the dedicated ``pdf_documents`` collection: the
+    file name and page/chunk coordinates are first-class fields (rather than
+    being crammed into sender/receiver/chat_id as before).
+    """
     file_name = pdf_path.name
     try:
         mtime = int(pdf_path.stat().st_mtime)
@@ -248,16 +249,12 @@ def build_records_for_pdf(
                     continue
                 yield {
                     "msg_id": make_msg_id(file_name, page_idx, chunk_idx, chunk),
-                    "sender": SENDER,
-                    "receiver": RECEIVER,
-                    "chat_id": file_name,
+                    "file_name": file_name,
+                    "file_path": str(pdf_path.resolve()),
                     "text": chunk[:MAX_TEXT_PAYLOAD_CHARS],
+                    "page_number": page_idx + 1,
+                    "chunk_index": chunk_idx,
                     "timestamp": mtime,
-                    "metadata": {
-                        "source_path": str(pdf_path.resolve()),
-                        "page_number": page_idx + 1,
-                        "chunk_index": chunk_idx,
-                    },
                 }
 
     logger.info(
@@ -317,7 +314,7 @@ def ingest_directory(
         return {"files": 0, "records": 0, "batches": 0}
 
     logger.info("Found %d PDF file(s) under %s", len(pdfs), root)
-    _status(f"📁 Found {len(pdfs)} PDF file(s) under %s\n")
+    _status(f"📁 Found {len(pdfs)} PDF file(s) under {root}\n")
 
     splitter = build_text_splitter(chunk_size, chunk_overlap)
     ocr_service = NaviDCOCRService(model_path=ocr_model)

@@ -1,8 +1,8 @@
-# storage/message_store.py
 from typing import Any
 from pymilvus import MilvusClient
 from text_utils import generate_message_id, preprocess_wechat_text
 from storage.milvus_schema import create_or_load_wechat_collection
+from settings import WECHAT_COLLECTION_NAME
 
 def insert_wechat_messages(
     messages: list[dict[str, Any]],
@@ -10,6 +10,11 @@ def insert_wechat_messages(
     embedder,
     sentiment_model,
 ) -> bool:
+    """Upsert CHAT messages into the wechat_messages collection.
+
+    PDF chunks no longer pass through here — they go to
+    storage.pdf_store.insert_pdf_chunks and the pdf_documents collection.
+    """
     create_or_load_wechat_collection(client)
 
     candidates = []
@@ -60,5 +65,5 @@ def insert_wechat_messages(
         for message, embedding, sentiment in zip(candidates, embeddings, sentiments)
     ]
 
-    client.upsert(collection_name="wechat_messages", data=rows)
+    client.upsert(collection_name=WECHAT_COLLECTION_NAME, data=rows)
     return True
